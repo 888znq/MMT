@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tick Compare — 28 Pairs · Deriv Live</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%; height: 100%;
+  background: #000432;
+  font-family: 'Courier New', monospace;
+  overflow: hidden;
+}
+#terminal {
+  width: 100vw; height: 100vh;
+  display: flex; flex-direction: column;
+  background: #000432;
+}
+#header {
+  background: #0d1420;
+  border-bottom: 1px solid #1a2a3a;
+  padding: 0 14px;
+  display: flex; align-items: center; gap: 14px;
+  height: 30px; flex-shrink: 0;
+}
+#hdr-title { color: #4a9eff; font-size: 11px; font-weight: 700; letter-spacing: 2px; white-space: nowrap; }
+#hdr-sub   { color: #2a3d52; font-size: 10px; white-space: nowrap; }
+#hdr-right { margin-left: auto; display: flex; gap: 14px; align-items: center; }
+.live-dot  { width: 6px; height: 6px; border-radius: 50%; background: #666; flex-shrink: 0; }
+.live-dot.on { background: #22cc66; animation: blink 2s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+.hdr-meta { font-size: 10px; color: #2a3d52; white-space: nowrap; }
+#conn-status { font-size: 10px; color: #556; }
+
+#legend-bar {
+  background: #080d17;
+  border-bottom: 1px solid #111d2a;
+  padding: 0 14px;
+  display: flex; gap: 14px; align-items: center;
+  height: 26px; flex-shrink: 0; overflow-x: auto; overflow-y: hidden;
+}
+#legend-bar::-webkit-scrollbar { height: 2px; }
+#legend-bar::-webkit-scrollbar-thumb { background: #1a2a3a; }
+.leg { display: flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0; }
+.leg-line  { width: 14px; height: 2px; border-radius: 1px; flex-shrink: 0; }
+.leg-name  { font-size: 9px; font-weight: 700; }
+.leg-px    { font-size: 9px; color: #334455; margin-left: 1px; }
+.leg-pct   { font-size: 9px; }
+
+#timer-bar {
+  background: #070b12;
+  padding: 2px 14px;
+  display: flex; align-items: center; gap: 10px;
+  height: 14px; flex-shrink: 0;
+}
+#timer-track { flex: 1; height: 2px; background: #0f1c2a; border-radius: 1px; overflow: hidden; }
+#timer-fill  { height: 100%; width: 0%; background: #4a9eff; border-radius: 1px; transition: width .3s linear; }
+#timer-txt   { font-size: 9px; color: #2a3d52; min-width: 48px; text-align: right; }
+
+#chart-wrap { flex: 1; position: relative; min-height: 0; }
+canvas { position: absolute; top: 0; left: 0; }
+#reset-badge {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%,-50%);
+  background: rgba(7,11,18,0.96);
+  border: 1px solid #2a4a7a;
+  color: #4a9eff; font-size: 13px; font-weight: 700;
+  padding: 10px 28px; border-radius: 4px;
+  display: none; letter-spacing: 2px; z-index: 10;
+}
+#footer {
+  background: #06090f;
+  border-top: 1px solid #111d2a;
+  padding: 0 14px;
+  display: flex; gap: 20px; align-items: center;
+  height: 22px; flex-shrink: 0;
+}
+.fi   { font-size: 9px; color: #2a3d52; white-space: nowrap; }
+.fi b { color: #3a5570; }
+#header, #legend-bar, #timer-bar, #footer { display: none !important; }
+#legend-bar { border: none !important; }
+
+</style>
+</head>
+<body>
+<div id="terminal">
+  <div id="header">
+    <div id="hdr-title">▌MULTI-PAIR TICK COMPARE</div>
+    <div id="hdr-sub">28 Pairs (26 FX + XAG + XAU + BTC + ETH) · Deriv Live · 180s window · normalized from open</div>
+    <div id="hdr-right">
+      <div class="live-dot" id="live-dot"></div>
+      <div class="hdr-meta" id="hdr-time">--:--:--</div>
+      <div class="hdr-meta" id="conn-status">Connecting…</div>
+      <div class="hdr-meta" id="cycle-lbl">Cycle 1</div>
+    </div>
+  </div>
+  <div id="legend-bar"></div>
+  <div id="timer-bar">
+    <div id="timer-track"><div id="timer-fill"></div></div>
+    <div id="timer-txt">0 / 180s</div>
+  </div>
+  <div id="chart-wrap">
+    <canvas id="chart"></canvas>
+    <div id="reset-badge">↺ RESETTING…</div>
+  </div>
+  <div id="footer">
+    <div class="fi">MODE: <b>NORMALIZED %Δ FROM OPEN</b></div>
+    <div class="fi" id="f-leader">LEADER: <b>—</b></div>
+    <div class="fi" id="f-laggard">LAGGARD: <b>—</b></div>
+    <div class="fi" style="margin-left:auto" id="f-spread">MAX SPREAD: <b>—</b></div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════
+   CONFIG — extracted from OHLC28
+═══════════════════════════════════════════════ */
+const WS_URL = 'wss://ws.derivws.com/websockets/v3?app_id=1089';
+
+// 28 pairs from OHLC28, mapped to Deriv symbol names
+const PAIRS = [
+  { label:'AUD/CAD', sym:'frxAUDCAD', color:'#00ff88' },
+  { label:'AUD/CHF', sym:'frxAUDCHF', color:'#ffe033' },
+  { label:'AUD/JPY', sym:'frxAUDJPY', color:'#00eeff' },
+  { label:'AUD/NZD', sym:'frxAUDNZD', color:'#ff9500' },
+  { label:'AUD/USD', sym:'frxAUDUSD', color:'#cc88ff' },
+  { label:'EUR/AUD', sym:'frxEURAUD', color:'#ffcc00' },
+  { label:'EUR/CAD', sym:'frxEURCAD', color:'#8899ff' },
+  { label:'EUR/CHF', sym:'frxEURCHF', color:'#00ffcc' },
+  { label:'EUR/GBP', sym:'frxEURGBP', color:'#44bbff' },
+  { label:'EUR/JPY', sym:'frxEURJPY', color:'#ff44cc' },
+  { label:'EUR/NZD', sym:'frxEURNZD', color:'#33ff66' },
+  { label:'EUR/USD', sym:'frxEURUSD', color:'#3399ff' },
+  { label:'GBP/AUD', sym:'frxGBPAUD', color:'#dd66ff' },
+  { label:'GBP/CAD', sym:'frxGBPCAD', color:'#ccff00' },
+  { label:'GBP/CHF', sym:'frxGBPCHF', color:'#00ccff' },
+  { label:'GBP/JPY', sym:'frxGBPJPY', color:'#ff4444' },
+  { label:'GBP/NZD', sym:'frxGBPNZD', color:'#ff6688' },
+  { label:'GBP/USD', sym:'frxGBPUSD', color:'#00ff99' },
+  { label:'NZD/JPY', sym:'frxNZDJPY', color:'#44ffbb' },
+  { label:'NZD/USD', sym:'frxNZDUSD', color:'#ff7722' },
+  { label:'USD/CAD', sym:'frxUSDCAD', color:'#00ffaa' },
+  { label:'USD/CHF', sym:'frxUSDCHF', color:'#ff2244' },
+  { label:'USD/JPY', sym:'frxUSDJPY', color:'#ffaa00' },
+  { label:'USD/NOK', sym:'frxUSDNOK', color:'#ff00ff' },
+  { label:'XAG/USD', sym:'frxXAGUSD', color:'#eef0ff' },
+  { label:'XAU/USD', sym:'frxXAUUSD', color:'#ffdd44' },
+  { label:'BTC/USD', sym:'cryBTCUSD', color:'#ff8800' },
+  { label:'ETH/USD', sym:'cryETHUSD', color:'#9988ff' },
+];
+
+const DURATION = 180;  // seconds per cycle
+const PAD      = { l: 4, r: 0, t: 4, b: 4 };
+const LABEL_W  = 0;
+
+/* ═══════════════════════════════════════════════
+   STATE
+═══════════════════════════════════════════════ */
+const canvas = document.getElementById('chart');
+const ctx    = canvas.getContext('2d');
+let W = 0, H = 0;
+
+let cycleNum  = 1;
+let cycleStart = null;   // epoch ms when cycle began
+let resetting  = false;
+let breath     = 0;
+let wsReady    = false;
+
+// Per-pair runtime
+const pairData = PAIRS.map(p => ({
+  ...p,
+  ticks : [],   // { elapsed: seconds from cycle start, pct: % from open }
+  open  : null, // first price seen this cycle
+  price : null,
+}));
+
+const symToIdx = {};
+PAIRS.forEach((p, i) => { symToIdx[p.sym] = i; });
+
+/* ═══════════════════════════════════════════════
+   LEGEND
+═══════════════════════════════════════════════ */
+const legendBar = document.getElementById('legend-bar');
+pairData.forEach(p => {
+  const d = document.createElement('div');
+  d.className = 'leg';
+  d.innerHTML =
+    `<div class="leg-line" style="background:${p.color}"></div>`+
+    `<span class="leg-name" style="color:${p.color}">${p.label}</span>`+
+    `<span class="leg-px"  id="lp-${p.label}">-</span>`+
+    `<span class="leg-pct" id="ld-${p.label}" style="color:#445566">—</span>`;
+  legendBar.appendChild(d);
+});
+
+/* ═══════════════════════════════════════════════
+   DERIV WEBSOCKET
+═══════════════════════════════════════════════ */
+let ws = null;
+let subQueue = [...PAIRS.map(p => p.sym)];
+let subIndex = 0;
+
+function connect() {
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    wsReady = true;
+    document.getElementById('conn-status').textContent = 'Connected';
+    document.getElementById('live-dot').classList.add('on');
+    cycleStart = Date.now();
+    // Subscribe to all 28 pairs, staggered 60ms apart to avoid rate-limit
+    subIndex = 0;
+    subscribeNext();
+  };
+
+  ws.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.error) return; // ignore subscription errors silently
+    if (msg.msg_type === 'tick') {
+      handleTick(msg.tick);
+    }
+  };
+
+  ws.onerror = () => {
+    document.getElementById('conn-status').textContent = 'Error — retrying…';
+    document.getElementById('live-dot').classList.remove('on');
+  };
+
+  ws.onclose = () => {
+    wsReady = false;
+    document.getElementById('conn-status').textContent = 'Disconnected — retrying…';
+    document.getElementById('live-dot').classList.remove('on');
+    setTimeout(connect, 3000);
+  };
+}
+
+function subscribeNext() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (subIndex >= PAIRS.length) return;
+  const sym = PAIRS[subIndex].sym;
+  ws.send(JSON.stringify({ ticks: sym, subscribe: 1 }));
+  subIndex++;
+  if (subIndex < PAIRS.length) setTimeout(subscribeNext, 60);
+}
+
+function unsubscribeAll() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ forget_all: 'ticks' }));
+  }
+}
+
+function handleTick(tick) {
+  const idx = symToIdx[tick.symbol];
+  if (idx === undefined || resetting) return;
+
+  const p     = pairData[idx];
+  const price = tick.quote;
+  const now   = Date.now();
+
+  if (!cycleStart) cycleStart = now;
+  const elapsed = (now - cycleStart) / 1000;
+
+  // Set open price once per cycle
+  if (p.open === null) p.open = price;
+  p.price = price;
+
+  const pct = (price - p.open) / p.open * 100;
+  p.ticks.push({ elapsed, pct });
+
+  // Update legend
+  const elPx  = document.getElementById('lp-' + p.label);
+  const elPct = document.getElementById('ld-' + p.label);
+  if (elPx)  elPx.textContent  = price.toFixed(price > 10 ? 3 : 5);
+  if (elPct) {
+    elPct.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(3) + '%';
+    elPct.style.color = pct >= 0 ? '#22cc66' : '#ee4444';
+  }
+}
+
+/* ═══════════════════════════════════════════════
+   RESET
+═══════════════════════════════════════════════ */
+function resetCycle() {
+  resetting = true;
+  document.getElementById('reset-badge').style.display = 'block';
+  unsubscribeAll();
+  setTimeout(() => {
+    cycleNum++;
+    cycleStart = Date.now();
+    document.getElementById('cycle-lbl').textContent = 'Cycle ' + cycleNum;
+    pairData.forEach(p => { p.ticks = []; p.open = null; p.price = null; });
+    resetting = false;
+    document.getElementById('reset-badge').style.display = 'none';
+    // Resubscribe
+    subIndex = 0;
+    subscribeNext();
+  }, 800);
+}
+
+/* ═══════════════════════════════════════════════
+   Y RANGE
+═══════════════════════════════════════════════ */
+function getRange() {
+  let lo = 0, hi = 0;
+  pairData.forEach(p => p.ticks.forEach(tk => {
+    if (tk.pct < lo) lo = tk.pct;
+    if (tk.pct > hi) hi = tk.pct;
+  }));
+  const half = Math.max(Math.abs(lo), Math.abs(hi), 0.01);
+  const pad  = half * 0.22 + 0.005;
+  return { lo: -(half + pad), hi: half + pad };
+}
+
+/* ═══════════════════════════════════════════════
+   COORDINATE MAP
+═══════════════════════════════════════════════ */
+function chartRight() { return W - 2; }
+function mapX(elapsedSec) {
+  return PAD.l + (elapsedSec / DURATION) * (chartRight() - PAD.l);
+}
+function mapY(pct, lo, hi) {
+  const cH = H - PAD.t - PAD.b;
+  return PAD.t + cH - ((pct - lo) / (hi - lo)) * cH;
+}
+
+/* ═══════════════════════════════════════════════
+   DRAW
+═══════════════════════════════════════════════ */
+function draw() {
+  if (!W || !H) return;
+  ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#000432';
+    ctx.fillRect(0, 0, W, H);
+
+  const { lo, hi } = getRange();
+  const cR = chartRight();
+
+  // --- Zero line only: dashed red, no grid ---
+    const zeroY = mapY(0, lo, hi);
+    ctx.strokeStyle = '#ff0000';
+                ctx.lineWidth   = 2;
+            ctx.setLineDash([]);
+            ctx.beginPath(); ctx.moveTo(PAD.l, zeroY); ctx.lineTo(cR, zeroY); ctx.stroke();
+
+  // --- Pair lines (draw first, labels on top) ---
+    pairData.forEach(p => {
+      if (p.ticks.length < 2) return;
+      // Crystal-clear line render — sharp, defined, glassy highlight (no blur/glow)
+                  var path = new Path2D();
+                  p.ticks.forEach((tk, i) => {
+                    const x = mapX(tk.elapsed);
+                    const y = mapY(tk.pct, lo, hi);
+                    i === 0 ? path.moveTo(x, y) : path.lineTo(x, y);
+                  });
+      
+                  ctx.lineJoin    = 'round';
+                  ctx.lineCap     = 'round';
+                  ctx.shadowColor = 'transparent';
+                  ctx.shadowBlur  = 0;
+                  ctx.globalAlpha = 1;
+      
+                  // Pass 1 — hairline dark contact-edge, just enough to separate from neighbors
+                              ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
+                              ctx.lineWidth   = 1.6;
+                              ctx.stroke(path);
+                  
+                              // Pass 2 — thin solid core in the series color, fully opaque, zero blur
+                              ctx.strokeStyle = p.color;
+                              ctx.lineWidth   = 0.9;
+                              ctx.stroke(path);
+                  
+                              // Pass 3 — hairline bright highlight
+                              ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+                              ctx.lineWidth   = 0.4;
+                              ctx.stroke(path);
+      
+                  ctx.shadowBlur  = 0;
+                  ctx.shadowColor = 'transparent';
+                  ctx.globalAlpha = 1;
+    });
+  
+    // --- End-of-line labels: placed right after each line's live tip ---
+      ctx.font      = 'bold 11px Courier New';
+            ctx.textAlign = 'left';
+      
+            const LGAP   = 14;
+            const LSPACE = 15;
+    
+      const labels = pairData
+        .filter(p => p.ticks.length >= 1)
+        .map(p => {
+          const last = p.ticks[p.ticks.length - 1];
+          return { p, tipX: mapX(last.elapsed), rawY: mapY(last.pct, lo, hi) };
+        })
+        .sort((a, b) => a.rawY - b.rawY);
+    
+      // Forward pass: push labels down if too close
+      for (let i = 1; i < labels.length; i++) {
+        if (labels[i].rawY - labels[i-1].rawY < LSPACE)
+          labels[i].rawY = labels[i-1].rawY + LSPACE;
+      }
+      // Backward pass: pull labels up if crowded at bottom
+      for (let i = labels.length - 2; i >= 0; i--) {
+        if (labels[i+1].rawY - labels[i].rawY < LSPACE)
+          labels[i].rawY = labels[i+1].rawY - LSPACE;
+      }
+    
+      labels.forEach(({ p, tipX, rawY }) => {
+          const lx  = tipX + LGAP;
+          const ly  = Math.max(PAD.t + 6, Math.min(H - PAD.b - 2, rawY));
+          const tw  = ctx.measureText(p.label).width;
+      
+          // Connector: thin hairline from live tip to label
+          const clampedTipY = Math.max(PAD.t + 6, Math.min(H - PAD.b - 2, mapY(p.ticks[p.ticks.length - 1].pct, lo, hi)));
+          ctx.save();
+          ctx.strokeStyle = p.color;
+                    ctx.lineWidth   = 0.8;
+                    ctx.globalAlpha = 0.9;
+                    ctx.setLineDash([]);
+                    ctx.beginPath();
+                    ctx.moveTo(tipX, clampedTipY);
+                    ctx.lineTo(lx - 2, ly);
+                    ctx.stroke();
+                    ctx.restore();
+          
+                    // Remeasure with bigger font before drawing rect
+                    ctx.font      = 'bold 11px Courier New';
+                    const tw2 = ctx.measureText(p.label).width;
+                    ctx.fillStyle = 'rgba(0,2,30,0.97)';
+                    ctx.fillRect(lx - 3, ly - 12, tw2 + 7, 18);
+                    // Shadow pass for crispness
+                    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+                    ctx.fillText(p.label, lx + 0.7, ly + 1.7);
+                    // Main label
+                    ctx.fillStyle = p.color;
+                    ctx.fillText(p.label, lx, ly + 1);
+                    ctx.font      = 'bold 11px Courier New';
+        });
+
+  // --- Border ---
+  ctx.save();
+  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+  ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth   = 2;
+    ctx.strokeRect(1.5, 1.5, W - 3, H - 3);
+    ctx.restore();
+}
+
+function updateTimerUI() {
+  const elapsed = cycleStart ? (Date.now() - cycleStart) / 1000 : 0;
+  document.getElementById('timer-fill').style.width = Math.min(elapsed / DURATION * 100, 100) + '%';
+  document.getElementById('timer-txt').textContent  = Math.min(Math.round(elapsed), DURATION) + ' / 180s';
+  document.getElementById('hdr-time').textContent   = new Date().toTimeString().slice(0, 8);
+
+  if (elapsed >= DURATION && !resetting) resetCycle();
+}
+
+/* ═══════════════════════════════════════════════
+   RESIZE + LOOP
+═══════════════════════════════════════════════ */
+function resize() {
+  const wrap = document.getElementById('chart-wrap');
+  const w = wrap.offsetWidth;
+  const h = wrap.offsetHeight;
+  if (w > 0 && h > 0 && (W !== w || H !== h)) {
+    W = w; H = h;
+    canvas.width  = W;
+    canvas.height = H;
+    canvas.style.width  = W + 'px';
+    canvas.style.height = H + 'px';
+  }
+}
+
+function loop() {
+  resize();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener('resize', resize);
+setTimeout(() => {
+  resize();
+  connect();
+  requestAnimationFrame(loop);
+}, 50);
+</script>
+</body>
+</html>
+​​​
