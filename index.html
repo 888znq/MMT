@@ -150,7 +150,7 @@ const PAIRS = [
 ];
 
 const DURATION = 180;  // seconds per cycle
-const PAD      = { l: 4, r: 0, t: 4, b: 4 };
+const PAD      = { l: 4, r: 90, t: 4, b: 4 };
 const LABEL_W  = 0;
 
 /* ═══════════════════════════════════════════════
@@ -313,7 +313,7 @@ function getRange() {
 /* ═══════════════════════════════════════════════
    COORDINATE MAP
 ═══════════════════════════════════════════════ */
-function chartRight() { return W - 2; }
+function chartRight() { return W - PAD.r; }
 function mapX(elapsedSec) {
   return PAD.l + (elapsedSec / DURATION) * (chartRight() - PAD.l);
 }
@@ -336,10 +336,10 @@ function draw() {
 
   // --- Zero line only: dashed red, no grid ---
     const zeroY = mapY(0, lo, hi);
-    ctx.strokeStyle = '#ff0000';
-                ctx.lineWidth   = 2;
-            ctx.setLineDash([]);
-            ctx.beginPath(); ctx.moveTo(PAD.l, zeroY); ctx.lineTo(cR, zeroY); ctx.stroke();
+        ctx.strokeStyle = '#ff0000';
+                    ctx.lineWidth   = 2;
+                ctx.setLineDash([]);
+                ctx.beginPath(); ctx.moveTo(PAD.l, zeroY); ctx.lineTo(W - 2, zeroY); ctx.stroke();
 
   // --- Pair lines (draw first, labels on top) ---
     pairData.forEach(p => {
@@ -364,9 +364,9 @@ function draw() {
                               ctx.stroke(path);
                   
                               // Pass 2 — thin solid core in the series color, fully opaque, zero blur
-                              ctx.strokeStyle = p.color;
-                              ctx.lineWidth   = 0.9;
-                              ctx.stroke(path);
+                                                            ctx.strokeStyle = p.color;
+                                                            ctx.lineWidth   = 2;
+                                                            ctx.stroke(path);
                   
                               // Pass 3 — hairline bright highlight
                               ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
