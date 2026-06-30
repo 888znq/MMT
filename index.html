@@ -86,7 +86,7 @@ canvas { position: absolute; top: 0; left: 0; }
 <div id="terminal">
   <div id="header">
     <div id="hdr-title">▌MULTI-PAIR TICK COMPARE</div>
-    <div id="hdr-sub">28 Pairs (26 FX + XAG + XAU + BTC + ETH) · Deriv Live · 180s window · normalized from open</div>
+    <div id="hdr-sub">28 Pairs (26 FX + XAG + XAU + BTC + ETH) · Deriv Live · 60s window · normalized from open</div>
     <div id="hdr-right">
       <div class="live-dot" id="live-dot"></div>
       <div class="hdr-meta" id="hdr-time">--:--:--</div>
@@ -97,7 +97,7 @@ canvas { position: absolute; top: 0; left: 0; }
   <div id="legend-bar"></div>
   <div id="timer-bar">
     <div id="timer-track"><div id="timer-fill"></div></div>
-    <div id="timer-txt">0 / 180s</div>
+    <div id="timer-txt">0 / 60s</div>
   </div>
   <div id="chart-wrap">
     <canvas id="chart"></canvas>
@@ -149,7 +149,7 @@ const PAIRS = [
   { label:'ETH/USD', sym:'cryETHUSD', color:'#9988ff' },
 ];
 
-const DURATION = 180;  // seconds per cycle
+const DURATION = 60;  // seconds per cycle
 const PAD      = { l: 4, r: 90, t: 4, b: 4 };
 const LABEL_W  = 0;
 
@@ -315,7 +315,8 @@ function getRange() {
 ═══════════════════════════════════════════════ */
 function chartRight() { return W - PAD.r; }
 function mapX(elapsedSec) {
-  return PAD.l + (elapsedSec / DURATION) * (chartRight() - PAD.l);
+  const clamped = Math.max(0, Math.min(elapsedSec, DURATION));
+  return PAD.l + (clamped / DURATION) * (chartRight() - PAD.l);
 }
 function mapY(pct, lo, hi) {
   const cH = H - PAD.t - PAD.b;
@@ -342,41 +343,40 @@ function draw() {
                 ctx.beginPath(); ctx.moveTo(PAD.l, zeroY); ctx.lineTo(W - 2, zeroY); ctx.stroke();
 
   // --- Pair lines (draw first, labels on top) ---
-    pairData.forEach(p => {
-      if (p.ticks.length < 2) return;
-      // Crystal-clear line render — sharp, defined, glassy highlight (no blur/glow)
-                  var path = new Path2D();
-                  p.ticks.forEach((tk, i) => {
-                    const x = mapX(tk.elapsed);
-                    const y = mapY(tk.pct, lo, hi);
-                    i === 0 ? path.moveTo(x, y) : path.lineTo(x, y);
-                  });
-      
-                  ctx.lineJoin    = 'round';
-                  ctx.lineCap     = 'round';
-                  ctx.shadowColor = 'transparent';
-                  ctx.shadowBlur  = 0;
-                  ctx.globalAlpha = 1;
-      
-                  // Pass 1 — hairline dark contact-edge, just enough to separate from neighbors
-                              ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
-                              ctx.lineWidth   = 1.6;
-                              ctx.stroke(path);
-                  
-                              // Pass 2 — thin solid core in the series color, fully opaque, zero blur
-                                                            ctx.strokeStyle = p.color;
-                                                            ctx.lineWidth   = 2;
-                                                            ctx.stroke(path);
-                  
-                              // Pass 3 — hairline bright highlight
-                              ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
-                              ctx.lineWidth   = 0.4;
-                              ctx.stroke(path);
-      
-                  ctx.shadowBlur  = 0;
-                  ctx.shadowColor = 'transparent';
-                  ctx.globalAlpha = 1;
-    });
+      pairData.forEach(p => {
+        if (p.ticks.length < 2) return;
+        // Dotted marker-line render — pastel line with circular dot markers at each tick
+                    var path = new Path2D();
+                    p.ticks.forEach((tk, i) => {
+                      const x = mapX(tk.elapsed);
+                      const y = mapY(tk.pct, lo, hi);
+                      i === 0 ? path.moveTo(x, y) : path.lineTo(x, y);
+                    });
+        
+                    ctx.lineJoin    = 'round';
+                    ctx.lineCap     = 'round';
+                    ctx.shadowColor = 'transparent';
+                    ctx.shadowBlur  = 0;
+                    ctx.globalAlpha = 0.85;
+        
+                    ctx.strokeStyle = p.color;
+                    ctx.lineWidth   = 1.5;
+                    ctx.stroke(path);
+        
+                    ctx.globalAlpha = 1;
+                    ctx.fillStyle   = p.color;
+                    p.ticks.forEach(tk => {
+                      const x = mapX(tk.elapsed);
+                      const y = mapY(tk.pct, lo, hi);
+                      ctx.beginPath();
+                      ctx.arc(x, y, 3, 0, Math.PI * 2);
+                      ctx.fill();
+                    });
+        
+                    ctx.shadowBlur  = 0;
+                    ctx.shadowColor = 'transparent';
+                    ctx.globalAlpha = 1;
+      });
   
     // --- End-of-line labels: placed right after each line's live tip ---
       ctx.font      = 'bold 11px Courier New';
@@ -448,7 +448,7 @@ function draw() {
 function updateTimerUI() {
   const elapsed = cycleStart ? (Date.now() - cycleStart) / 1000 : 0;
   document.getElementById('timer-fill').style.width = Math.min(elapsed / DURATION * 100, 100) + '%';
-  document.getElementById('timer-txt').textContent  = Math.min(Math.round(elapsed), DURATION) + ' / 180s';
+  document.getElementById('timer-txt').textContent  = Math.min(Math.round(elapsed), DURATION) + ' / 60s';
   document.getElementById('hdr-time').textContent   = new Date().toTimeString().slice(0, 8);
 
   if (elapsed >= DURATION && !resetting) resetCycle();
@@ -473,6 +473,7 @@ function resize() {
 function loop() {
   resize();
   draw();
+  updateTimerUI();
   requestAnimationFrame(loop);
 }
 
